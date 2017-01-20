@@ -117,6 +117,8 @@ func (vw *verifyWorker) process() {
 				}
 				continue
 			}
+
+			request.Header.Add("Connection", "close")
 			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
 			// Call server
