@@ -375,19 +375,12 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		resultChan:  resultChan,
 	}
 
+	var result *workResult
+
 	// send workRequest to each worker
 	for _, worker := range ya.workers {
 		worker.work <- wr
-	}
 
-	// count the errors so we can handle when all servers fail (network fail for instance)
-	errCount := 0
-
-	// local result var, will contain the first result we have
-	var result *workResult
-
-	// keep looping until we have a good result
-	for {
 		// listen for result from a worker
 		result = <-resultChan
 
@@ -395,17 +388,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		if result.err != nil {
 			result.response.Body.Close()
 
-			// increment error counter
-			errCount++
-
 			if ya.debug {
 				// debug logging
 				log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
-			}
-
-			if errCount == len(ya.apiServerList) {
-				// All workers are done, there's nothing left to try. we return an error.
-				return nil, false, errors.New("None of the servers responded properly.")
 			}
 
 			// we have an error, but not all workers responded yet, so lets wait for the next result.
@@ -414,8 +399,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 		// create a yubiResult from the workers response.
 		yr, err = newYubiResponse(result)
+
 		if err != nil {
-			return nil, false, err
+			continue
 		}
 
 		// Check for "REPLAYED_REQUEST" result.
@@ -425,17 +411,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// Lets wait for the result from the other server.
 			// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
 
-			// increment error counter
-			errCount++
-
 			if ya.debug {
 				// debug logging
 				log.Println("Got replayed request: ", result.response.Body)
-			}
-
-			if errCount == len(ya.apiServerList) {
-				// All workers are done, there' is nothing left to try. We return an error.
-				return nil, false, errors.New("None of the servers responded properly.")
 			}
 
 			// We have a replayed request, but not all workers responded yet, so lets wait for the next result.
@@ -466,7 +444,6 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
 		case "REPLAYED_REQUEST":
 			panic("Unexpected. This status should've been catched in the worker response loop.")
-			return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
 		default:
 			return yr, false, fmt.Errorf("Unknown status parameter (%s) sent by api server.", status)
 		}
