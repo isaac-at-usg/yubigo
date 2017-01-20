@@ -109,6 +109,7 @@ func (vw *verifyWorker) process() {
 
 			// Create request
 			request, err := http.NewRequest("GET", url, nil)
+
 			if err != nil {
 				w.resultChan <- &workResult{
 					response:     nil,
@@ -523,6 +524,8 @@ type YubiResponse struct {
 }
 
 func newYubiResponse(result *workResult) (*YubiResponse, error) {
+	defer result.response.Body.Close()
+
 	bodyReader := bufio.NewReader(result.response.Body)
 	yr := &YubiResponse{}
 	yr.resultParameters = make(map[string]string)
