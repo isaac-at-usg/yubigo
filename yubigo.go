@@ -393,6 +393,8 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 		// check for error
 		if result.err != nil {
+			result.response.Body.Close()
+
 			// increment error counter
 			errCount++
 
@@ -548,6 +550,7 @@ func newYubiResponse(result *workResult) (*YubiResponse, error) {
 			yr.resultParameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
 		}
 	}
+
 	return yr, nil
 }
 
