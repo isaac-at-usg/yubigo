@@ -386,7 +386,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 		// check for error
 		if result.err != nil {
-			result.response.Body.Close()
+			if result.response != nil && result.response.Body != nil {
+				result.response.Body.Close()
+			}
 
 			if ya.debug {
 				// debug logging
