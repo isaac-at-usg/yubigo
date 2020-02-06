@@ -120,6 +120,7 @@ func (vw *verifyWorker) process() {
 				continue
 			}
 
+			request.Header.Add("Connection", "close")
 			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
 			// Call server with cancel context
@@ -246,6 +247,7 @@ func (ya *YubiAuth) buildWorkers() {
 			worker.client = &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: tlsConfig,
+					DisableKeepAlives: true,
 				},
 			}
 		} else {
@@ -539,6 +541,8 @@ type YubiResponse struct {
 }
 
 func newYubiResponse(result *workResult) (*YubiResponse, error) {
+	defer result.response.Body.Close()
+	
 	bodyReader := bufio.NewReader(result.response.Body)
 	yr := &YubiResponse{}
 	yr.resultParameters = make(map[string]string)
