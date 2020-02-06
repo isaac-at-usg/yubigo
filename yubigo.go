@@ -83,7 +83,7 @@ type verifyWorker struct {
 }
 
 type workRequest struct {
-	ctx context.Context
+	ctx         context.Context
 	paramString *string
 	resultChan  chan *workResult
 }
@@ -246,7 +246,7 @@ func (ya *YubiAuth) buildWorkers() {
 		if HTTPClient == nil {
 			worker.client = &http.Client{
 				Transport: &http.Transport{
-					TLSClientConfig: tlsConfig,
+					TLSClientConfig:   tlsConfig,
 					DisableKeepAlives: true,
 				},
 			}
@@ -380,7 +380,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 	// create workRequest instance
 	wr := &workRequest{
-		ctx:ctx,
+		ctx:         ctx,
 		paramString: &paramString,
 		resultChan:  resultChan,
 	}
