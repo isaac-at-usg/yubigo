@@ -2,6 +2,7 @@ package yubigo
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/tls"
@@ -82,6 +83,7 @@ type verifyWorker struct {
 }
 
 type workRequest struct {
+	ctx         context.Context
 	paramString *string
 	resultChan  chan *workResult
 }
@@ -109,7 +111,6 @@ func (vw *verifyWorker) process() {
 
 			// Create request
 			request, err := http.NewRequest("GET", url, nil)
-
 			if err != nil {
 				w.resultChan <- &workResult{
 					response:     nil,
@@ -122,11 +123,16 @@ func (vw *verifyWorker) process() {
 			request.Header.Add("Connection", "close")
 			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
-			// Call server
+			// Call server with cancel context
+			request = request.WithContext(w.ctx)
 			response, err := vw.client.Do(request)
 
 			// If we received an error from the client, return that (wrapped) on the channel.
 			if err != nil {
+				// skip cancellation errors
+				if w.ctx.Err() == context.Canceled {
+					continue
+				}
 				w.resultChan <- &workResult{
 					response:     nil,
 					requestQuery: url,
@@ -310,6 +316,12 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 // If no error was returned, the returned 'ok bool' indicates if the OTP is valid
 // if the 'ok bool' is true, additional informtion can be found in the returned YubiResponse object
 func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
+	return ya.VerifyWithContext(context.Background(), otp)
+}
+
+// The verify with context method is identical to the non context variant, except it respects the provided
+// context
+func (ya *YubiAuth) VerifyWithContext(ctx context.Context, otp string) (yr *YubiResponse, ok bool, err error) {
 	// Lock
 	ya.use.Lock()
 	defer ya.use.Unlock()
@@ -369,18 +381,29 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	// create result channel, buffersize equals the amount of workers.
 	resultChan := make(chan *workResult, len(ya.workers))
 
+	// create a cancel context to cancel http requests while we already have a good result
+	ctx, cancel := context.WithCancel(ctx)
+
 	// create workRequest instance
 	wr := &workRequest{
+		ctx:         ctx,
 		paramString: &paramString,
 		resultChan:  resultChan,
 	}
 
-	var result *workResult
-
 	// send workRequest to each worker
 	for _, worker := range ya.workers {
 		worker.work <- wr
+	}
 
+	// count the errors so we can handle when all servers fail (network fail for instance)
+	errCount := 0
+
+	// local result var, will contain the first result we have
+	var result *workResult
+
+	// keep looping until we have a good result
+	for {
 		// listen for result from a worker
 		result = <-resultChan
 
@@ -390,9 +413,17 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 				result.response.Body.Close()
 			}
 
+			// increment error counter
+			errCount++
+
 			if ya.debug {
 				// debug logging
 				log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
+			}
+
+			if errCount == len(ya.apiServerList) {
+				// All workers are done, there's nothing left to try. we return an error.
+				return nil, false, errors.New("None of the servers responded properly.")
 			}
 
 			// we have an error, but not all workers responded yet, so lets wait for the next result.
@@ -401,9 +432,8 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 		// create a yubiResult from the workers response.
 		yr, err = newYubiResponse(result)
-
 		if err != nil {
-			continue
+			return nil, false, err
 		}
 
 		// Check for "REPLAYED_REQUEST" result.
@@ -411,16 +441,27 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// The result status is "REPLAYED_REQUEST".
 			// This means that the server for this request got sync with an other server before our request.
 			// Lets wait for the result from the other server.
-			// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
+			// See: https://forum.yubico.com/viewtopic.php?f=3&t=701
+
+			// increment error counter
+			errCount++
 
 			if ya.debug {
 				// debug logging
 				log.Println("Got replayed request: ", result.response.Body)
 			}
 
+			if errCount == len(ya.apiServerList) {
+				// All workers are done, there' is nothing left to try. We return an error.
+				return nil, false, errors.New("None of the servers responded properly.")
+			}
+
 			// We have a replayed request, but not all workers responded yet, so lets wait for the next result.
 			continue
 		}
+
+		// we have a result that satisfies us so we can cancel the other clients
+		cancel()
 
 		// No error or REPLAYED_REQUEST. Seems like we have a proper result.
 		break
@@ -446,6 +487,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
 		case "REPLAYED_REQUEST":
 			panic("Unexpected. This status should've been catched in the worker response loop.")
+			return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
 		default:
 			return yr, false, fmt.Errorf("Unknown status parameter (%s) sent by api server.", status)
 		}
@@ -529,7 +571,6 @@ func newYubiResponse(result *workResult) (*YubiResponse, error) {
 			yr.resultParameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
 		}
 	}
-
 	return yr, nil
 }
 
