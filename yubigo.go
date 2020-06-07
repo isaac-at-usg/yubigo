@@ -316,6 +316,12 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 // If no error was returned, the returned 'ok bool' indicates if the OTP is valid
 // if the 'ok bool' is true, additional informtion can be found in the returned YubiResponse object
 func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
+	return ya.VerifyWithContext(context.Background(), otp)
+}
+
+// The verify with context method is identical to the non context variant, except it respects the provided
+// context
+func (ya *YubiAuth) VerifyWithContext(ctx context.Context, otp string) (yr *YubiResponse, ok bool, err error) {
 	// Lock
 	ya.use.Lock()
 	defer ya.use.Unlock()
@@ -376,7 +382,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	resultChan := make(chan *workResult, len(ya.workers))
 
 	// create a cancel context to cancel http requests while we already have a good result
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	// create workRequest instance
 	wr := &workRequest{
@@ -542,7 +548,7 @@ type YubiResponse struct {
 
 func newYubiResponse(result *workResult) (*YubiResponse, error) {
 	defer result.response.Body.Close()
-	
+
 	bodyReader := bufio.NewReader(result.response.Body)
 	yr := &YubiResponse{}
 	yr.resultParameters = make(map[string]string)
